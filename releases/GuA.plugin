@@ -257,8 +257,6 @@ class guaPlugin(BasePlugin):
                 json.dump(list(self.hidden_ids), f)
         except: pass
 
-    def _create_Chats_fragment(self):
-        pass
 
     def _update_menu_item(self):
         if self.is_hidden_mode_active and not self.menu_item_added:
@@ -306,8 +304,6 @@ class guaPlugin(BasePlugin):
             )
         return items
 
-    def _create_Appear_frag(self): pass
-
     def _create_Dev_fragment(self):
         showupdatebottomsheet(
             title="Developers",
@@ -346,8 +342,7 @@ All usernames are clickable at the bottom of the plugin settings""",
     def _create_Help_fragment(self):
         return [
             Header(text="General"),
-            Header(text="Appearance"),
-            Header(text="Chats"),
+            Divider(text=""),
             Header(text="Bugs"),
             Divider(text="""If you find a bug in the plugin, write to the @GuAgchat chat in the Bugs topic using the pinned form.\n\nIf the bug is critical, write to @oxxximif in private messages""")
         ]
@@ -392,8 +387,6 @@ All usernames are clickable at the bottom of the plugin settings""",
         return [
             Header(text="Categories"),
             Text(text="General", icon="msg_media_solar", create_sub_fragment=self._create_Gen_frag),
-            Text(text="Appearance", icon="msg_palette", create_sub_fragment=self._create_Appear_frag),
-            Text(text="Chats", icon="msg2_discussion", create_sub_fragment=self._create_Chats_fragment),
             Text(text="Developers", icon="menu_devices", on_click=lambda v: self._create_Dev_fragment()),
             Text(text="Development support", icon="etg_settings", on_click=lambda v: self._create_sup_fragment()),
             Text(text="Help", icon="msg_help", create_sub_fragment=self._create_Help_fragment),
