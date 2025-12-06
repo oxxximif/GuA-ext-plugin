@@ -1,0 +1,407 @@
+# == Metadata ==
+__id__ = "gua"
+__name__ = "GuA"
+__description__ = "**GuALib 1.0.0 is required**"
+__author__ = "@oxxximif\nChannel • @GuAmain\nChat • @GuAgchat"
+__version__ = "1.0.1-beta"
+__icon__ = "GuAicons/2"
+__min_version__ = "12.1.1"
+
+# == Import ==
+from ui.settings import Header, Divider, Switch, Text
+from client_utils import get_last_fragment
+from gualib import showupdatebottomsheet
+
+from base_plugin import BasePlugin, MenuItemData, MenuItemType, XposedHook, HookResult, HookStrategy
+from android.widget import Toast
+from java.util import ArrayList
+from java.lang import Class
+from org.telegram.messenger import MessagesController, UserConfig, ApplicationLoader, NotificationCenter
+
+import json
+import os
+
+def show_toast(text):
+    try:
+        Toast.makeText(ApplicationLoader.applicationContext, text, Toast.LENGTH_SHORT).show()
+    except: pass
+
+def get_save_path():
+    try:
+        base = ApplicationLoader.applicationContext.getFilesDir().getAbsolutePath()
+        return os.path.join(base, "gua_hidechats_data.json")
+    except:
+        return "gua_hidechats_data.json"
+
+class GetDialogsHook(XposedHook):
+    def __init__(self, plugin): self.plugin = plugin
+    def after_hooked_method(self, param):
+        if not self.plugin.is_hidden_mode_active: return
+        dialogs_list = param.getResult()
+        if not dialogs_list or not isinstance(dialogs_list, ArrayList): return
+        to_remove = ArrayList()
+        for i in range(dialogs_list.size()):
+            dialog = dialogs_list.get(i)
+            if dialog:
+                d_id = str(getattr(dialog, "id", 0))
+                if d_id in self.plugin.hidden_ids:
+                    to_remove.add(dialog)
+        if not to_remove.isEmpty():
+            dialogs_list.removeAll(to_remove)
+
+class UniversalNotifHook(XposedHook):
+    def __init__(self, plugin): self.plugin = plugin
+    def before_hooked_method(self, param):
+        if not self.plugin.is_hidden_mode_active: return
+        if not self.plugin.get_setting("block_notifications", True): return
+        messages_list = None
+        for arg in param.args:
+            if isinstance(arg, ArrayList):
+                messages_list = arg
+                break
+        if not messages_list or messages_list.isEmpty(): return
+        to_remove = ArrayList()
+        for i in range(messages_list.size()):
+            msg = messages_list.get(i)
+            if msg:
+                try:
+                    d_id = str(msg.getDialogId())
+                    if d_id in self.plugin.hidden_ids:
+                        to_remove.add(msg)
+                except: pass
+        if not to_remove.isEmpty():
+            messages_list.removeAll(to_remove)
+            if messages_list.isEmpty():
+                param.setResult(None)
+
+class SoundHook(XposedHook):
+    def __init__(self, plugin): self.plugin = plugin
+    def before_hooked_method(self, param):
+        if not self.plugin.is_hidden_mode_active: return
+        if not self.plugin.get_setting("block_notifications", True): return
+        try:
+            d_id = str(param.args[0])
+            if d_id in self.plugin.hidden_ids:
+                param.setResult(None)
+        except: pass
+
+class guaPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self.hidden_ids = set()
+        self.is_hidden_mode_active = True
+        self.hooks = []
+        self.viewing_list = False
+        self.menu_item_added = False
+
+    def on_plugin_load(self):
+        self.log("GuA loaded")
+        self.hidden_ids = self.load_data()
+        self.is_hidden_mode_active = self.get_setting("hide_chats_key", False)
+
+        self.add_on_send_message_hook()
+
+        self._update_menu_item()
+        self._apply_mode_state()
+
+        try:
+            TargetClass = Class.forName("org.telegram.ui.DialogsActivity")
+            for m in TargetClass.getDeclaredMethods():
+                if m.getName() == "getDialogsArray":
+                    m.setAccessible(True)
+                    self.hooks.append(self.hook_method(m, GetDialogsHook(self)))
+        except: pass
+
+        try:
+            NC = Class.forName("org.telegram.messenger.NotificationsController")
+            for m in NC.getDeclaredMethods():
+                name = m.getName()
+                if name == "processNewMessages":
+                    m.setAccessible(True)
+                    self.hooks.append(self.hook_method(m, UniversalNotifHook(self)))
+                if name == "playOutChatSound":
+                    m.setAccessible(True)
+                    self.hooks.append(self.hook_method(m, SoundHook(self)))
+        except: pass
+
+        self.force_reload()
+
+    def on_plugin_unload(self):
+        self.log("GuA unloaded")
+        for h in self.hooks:
+            try: self.unhook_method(h)
+            except: pass
+        self.force_reload()
+
+    def handle_menu_click(self, context):
+        try:
+            raw_id = context.get("dialog_id")
+            if raw_id is None: return
+            chat_id = str(raw_id)
+            if chat_id in self.hidden_ids:
+                self.hidden_ids.remove(chat_id)
+                show_toast("Chat Unhidden")
+            else:
+                self.hidden_ids.add(chat_id)
+                show_toast("Chat Hidden")
+            self.save_data()
+            self.force_reload()
+        except: pass
+
+    def get_chat_name(self, chat_id_str):
+        try:
+            cid = int(chat_id_str)
+            acc = UserConfig.selectedAccount
+            controller = MessagesController.getInstance(acc)
+            if cid > 0:
+                u = controller.getUser(cid)
+                if u: return f"{getattr(u, 'first_name', '')} {getattr(u, 'last_name', '')}".strip()
+            else:
+                c = controller.getChat(abs(cid))
+                if c: return getattr(c, "title", "Group")
+        except: pass
+        return f"ID: {chat_id_str}"
+
+    def _create_hidechats_fragment(self):
+        if not self.viewing_list:
+            items = [
+                Header(text=f"Hidden Chats ({len(self.hidden_ids)})")
+            ]
+            if self.hidden_ids:
+                for cid in list(self.hidden_ids):
+                    items.append(Switch(
+                        key=f"h_{cid}",
+                        text=self.get_chat_name(cid),
+                        subtext=f"ID: {cid}",
+                        default=True,
+                        on_change=lambda a, c=cid: self.manual_unhide(a, c)
+                    ))
+            else:
+                items.append(Header(text="List is empty."))
+            return items
+        else:
+            items = [
+                Header(text=f"Hidden Chats ({len(self.hidden_ids)})")
+            ]
+            if self.hidden_ids:
+                for cid in list(self.hidden_ids):
+                    items.append(Switch(
+                        key=f"h_{cid}",
+                        text=self.get_chat_name(cid),
+                        subtext=f"ID: {cid}",
+                        default=True,
+                        on_change=lambda a, c=cid: self.manual_unhide(a, c)
+                    ))
+            else:
+                items.append(Header(text="List is empty."))
+            return items
+
+    def switch_to_list_view(self, active):
+        self.viewing_list = True
+        self.set_setting("dummy", not self.get_setting("dummy", False))
+
+    def switch_to_main_view(self, active):
+        self.viewing_list = False
+        self.set_setting("dummy", not self.get_setting("dummy", False))
+
+    def manual_unhide(self, active, cid):
+        if not active:
+            if cid in self.hidden_ids:
+                self.hidden_ids.remove(cid)
+                self.save_data()
+                self.force_reload()
+        else:
+            self.hidden_ids.add(cid)
+            self.save_data()
+            self.force_reload()
+
+    def toggle_mode(self, active):
+        self.is_hidden_mode_active = active
+        self.force_reload()
+
+    def on_send_message_hook(self, account, params):
+        if params.message and params.message.strip() == "/hide":
+            cid = str(params.peer)
+            if cid in self.hidden_ids:
+                self.hidden_ids.remove(cid)
+                show_toast("Unhidden")
+            else:
+                self.hidden_ids.add(cid)
+                show_toast("Hidden")
+            self.save_data()
+            self.force_reload()
+            return HookResult(strategy=HookStrategy.SKIP)
+        return HookResult()
+
+    def force_reload(self):
+        try:
+            NotificationCenter.getInstance(UserConfig.selectedAccount).postNotificationName(NotificationCenter.dialogsNeedReload)
+        except: pass
+
+    def load_data(self):
+        path = get_save_path()
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return set(json.load(f))
+            except: pass
+        return set()
+
+    def save_data(self):
+        path = get_save_path()
+        try:
+            with open(path, "w") as f:
+                json.dump(list(self.hidden_ids), f)
+        except: pass
+
+    def _create_Chats_fragment(self):
+        pass
+
+    def _update_menu_item(self):
+        if self.is_hidden_mode_active and not self.menu_item_added:
+            self.add_menu_item(MenuItemData(
+                menu_type=MenuItemType.CHAT_ACTION_MENU,
+                text="Hide / Show Chat",
+                on_click=self.handle_menu_click,
+                icon="outline_visibility_off_24"
+            ))
+            self.menu_item_added = True
+        elif not self.is_hidden_mode_active and self.menu_item_added:
+            self.remove_menu_item(MenuItemType.CHAT_ACTION_MENU, "Hide / Show Chat")
+            self.menu_item_added = False
+
+    def _apply_mode_state(self):
+        if not self.is_hidden_mode_active:
+            if self.hidden_ids:
+                self.hidden_ids.clear()
+                self.save_data()
+                self.force_reload()
+
+    def _on_hiden_chat_switch_change(self, new_value: bool):
+        self.is_hidden_mode_active = new_value
+        self._update_menu_item()
+        self._apply_mode_state()
+        self.force_reload()
+
+    def _create_Gen_frag(self):
+        hide_enabled = self.get_setting("hide_chats_key", False)
+        items = [
+            Header(text="Hide"),
+            Switch(
+                key="hide_chats_key",
+                text="Hide Chats",
+                default=False,
+                subtext="To hide a chat: Chat → ⋮ → Plugin → Hide / Show Chat",
+                icon="msg_block2",
+                on_change=self._on_hiden_chat_switch_change,
+                link_alias="hide_chats_switch"
+            ),
+        ]
+        if hide_enabled:
+            items.append(
+                Text(text="Hidden chats list", icon="msg_block2_solar", create_sub_fragment=self._create_hidechats_fragment)
+            )
+        return items
+
+    def _create_Appear_frag(self): pass
+
+    def _create_Dev_fragment(self):
+        showupdatebottomsheet(
+            title="Developers",
+            subtitle="GuA Developers",
+            description="""The main developer is @oxxximif.
+If you want to join the GuA team, please contact @oxxximif in private messages.
+
+All usernames are clickable at the bottom of the plugin settings""",
+            github_url=None,
+            plugin_name="GuA_DevInfo",
+            sticker_pack="GuAicons",
+            sticker_index=1,
+            button_text="Understood",
+            bottom_text="Love",
+            show_language_selector=False,
+            show_user_avatar=False,
+            description_centered=True
+        )
+
+    def _create_sup_fragment(self):
+        showupdatebottomsheet(
+            title="About Donations",
+            subtitle="Supporting GuA Development",
+            description="If you want to support the development of GuA, write to @oxxximif and ask about the current translation method. You can also simply make a gift to @oxxximif on Telegram.\n\nSupporting the project gives you the support status, and you can write to @oxxximif in private messages for more information.",
+            github_url=None,
+            plugin_name="GuA_DonationInfo",
+            sticker_pack="GuAicons",
+            sticker_index=1,
+            button_text="Understood",
+            bottom_text="Thank you for considering supporting the development of GuA!",
+            show_language_selector=False,
+            show_user_avatar=False,
+            description_centered=True
+        )
+
+    def _create_Help_fragment(self):
+        return [
+            Header(text="General"),
+            Header(text="Appearance"),
+            Header(text="Chats"),
+            Header(text="Bugs"),
+            Divider(text="""If you find a bug in the plugin, write to the @GuAgchat chat in the Bugs topic using the pinned form.\n\nIf the bug is critical, write to @oxxximif in private messages""")
+        ]
+
+    def _create_ChannelLin_fragment(self):
+        try:
+            MessagesController.getInstance(0).openByUserName("GuAmain", get_last_fragment(), 1)
+        except: pass
+
+    def _create_ChatsLin_fragment(self):
+        try:
+            MessagesController.getInstance(0).openByUserName("GuAgchat", get_last_fragment(), 1)
+        except: pass
+
+    def _create_GitHubLin_fragment(self):
+        from android.content import Intent
+        from android.net import Uri
+        get_last_fragment().getParentActivity().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/oxxximif/GuA-ext-plugin/tree/main?tab=readme-ov-file")))
+
+    def _create_cost_fragment(self):
+        try:
+            MessagesController.getInstance(0).openByUserName("QuantaPlugins", get_last_fragment(), 1)
+        except: pass
+
+    def _on_text_WarAtt(self):
+        showupdatebottomsheet(
+            title="Attention",
+            subtitle="Important information",
+            description="Plugin GuA may affect the device's performance",
+            github_url=None,
+            plugin_name="GuA_AttentionInfo",
+            sticker_pack="GuAicons",
+            sticker_index=1,
+            button_text="Understood",
+            bottom_text="Use only the functions that you need.",
+            show_language_selector=False,
+            show_user_avatar=False,
+            description_centered=True
+        )
+
+    def create_settings(self):
+        return [
+            Header(text="Categories"),
+            Text(text="General", icon="msg_media_solar", create_sub_fragment=self._create_Gen_frag),
+            Text(text="Appearance", icon="msg_palette", create_sub_fragment=self._create_Appear_frag),
+            Text(text="Chats", icon="msg2_discussion", create_sub_fragment=self._create_Chats_fragment),
+            Text(text="Developers", icon="menu_devices", on_click=lambda v: self._create_Dev_fragment()),
+            Text(text="Development support", icon="etg_settings", on_click=lambda v: self._create_sup_fragment()),
+            Text(text="Help", icon="msg_help", create_sub_fragment=self._create_Help_fragment),
+            Divider(),
+            Header(text="Links"),
+            Text(text="Channel", icon="msg_channel_solar", on_click=lambda v: self._create_ChannelLin_fragment()),
+            Text(text="Chat", icon="msg2_discussion", on_click=lambda v: self._create_ChatsLin_fragment()),
+            Text(text="GitHub", icon="msg_input_like", on_click=lambda v: self._create_GitHubLin_fragment()),
+            Text(text="Thanks to QuantaPlugins", icon="msg_input_like", on_click=lambda v: self._create_cost_fragment()),
+            Divider(),
+            Header(text="Warning"),
+            Text(text="Attention", icon="msg_info", accent=True, on_click=lambda v: self._on_text_WarAtt()),
+            Divider(text="@GuAmain | @oxxximif | @GuAgchat | GuA")
+        ]
