@@ -342,7 +342,7 @@ All usernames are clickable at the bottom of the plugin settings""",
     def _create_Help_fragment(self):
         return [
             Header(text="General"),
-            Divider(text=""),
+            Divider(text="1. Hiding/showing chats:\n • Enable this feature in General -> Hide chats\n • Now you can show/hide chats, go to the chat, then click on the colon -> plugins -> Hide/show chats\n • If you want to return the chat to visibility, then find this chat in the search and Bring him back."),
             Header(text="Bugs"),
             Divider(text="""If you find a bug in the plugin, write to the @GuAgchat chat in the Bugs topic using the pinned form.\n\nIf the bug is critical, write to @oxxximif in private messages""")
         ]
@@ -401,3 +401,4 @@ All usernames are clickable at the bottom of the plugin settings""",
             Text(text="Attention", icon="msg_info", accent=True, on_click=lambda v: self._on_text_WarAtt()),
             Divider(text="@GuAmain | @oxxximif | @GuAgchat | GuA")
         ]
+
