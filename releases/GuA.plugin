@@ -21,6 +21,9 @@ from org.telegram.messenger import MessagesController, UserConfig, ApplicationLo
 import json
 import os
 
+def get_localiz_text():
+    pass
+
 def show_toast(text):
     try:
         Toast.makeText(ApplicationLoader.applicationContext, text, Toast.LENGTH_SHORT).show()

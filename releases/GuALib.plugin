@@ -393,6 +393,37 @@ class QuantaHut(BasePlugin):
             description_centered=True
         )
 
+    def _show_gua_localization(self):
+        try:
+            quantahut_log("Localization gua")
+            try:
+                from org.telegram.messenger import LocaleController
+                current_language = LocaleController.getInstance().getCurrentLocaleInfo().getLangCode()
+            except:
+                current_language = "en"
+
+            try:
+                from java.util import Locale
+                locale = Locale(current_language)
+                language_name = locale.getDisplayLanguage(locale)
+            except:
+                language_name = current_language.title()
+                    
+                showupdatebottomsheet(
+                    title="GuA Localization",
+                    subtitle="Loalization",
+                    description="Download localization",
+                    github_url=None,
+                    plugin_name="GuA_Localization",
+                    sticker_pack="GuAicons",
+                    sticker_index=1,
+                    button_text="Download",
+                    bottom_text="Localization",
+                    show_language_selector=False,
+                    show_user_avatar=False,
+                    description_centered=True
+                )
+
     def _show_quanta_bottom_sheet(self):
         try:
             quantahut_log("Showing Quanta bottom sheet...")
@@ -1605,7 +1636,13 @@ class QuantaDeeplinkHook:
                 param.setResult(None)
             elif url == "tg://GuA":
                 run_on_ui_thread(self.plugin._show_gua_support)
-                param.setResult(None)                
+                param.setResult(None)
+            elif url == "tg://localization":
+                run_on_ui_thread(self.plugin._show_gua_localization)
+                param.setResult(None)
+            elif url == "tg://Localization":
+                run_on_ui_thread(self.plugin._show_gua_localization)
+                param.setResult(None)                 
         except Exception as e:
             self.plugin.log(f"Error in deeplink hook: {e}")
 
